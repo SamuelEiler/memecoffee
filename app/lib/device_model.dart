@@ -7,6 +7,8 @@
 import 'package:flutter/foundation.dart';
 import 'protocol.dart';
 
+typedef Sender = Future<void> Function(String cmd);
+
 const int kHistorySize = 200; // rolling window for the temperature chart
 
 class ShotState {
@@ -33,6 +35,13 @@ class DeviceModel extends ChangeNotifier {
   // Rolling history for the temperature chart
   final List<double> historySensor1 = [];
   final List<double> historySetpoint = [];
+
+  // Set this from main.dart to enable outbound commands
+  Sender? sender;
+
+  // Shot timer
+  DateTime? shotStartTime;   // wall-clock time the current shot started
+  int shotTargetSeconds = 25; // user-configurable target duration
 
   // -------------------------------------------------------------------------
   // Called by the BLE connection layer
@@ -74,8 +83,10 @@ class DeviceModel extends ChangeNotifier {
   void onShot(ShotMessage msg) {
     if (msg.durationMs == 0) {
       shot = const ShotState(active: true, durationMs: 0);
+      shotStartTime = DateTime.now();
     } else {
       shot = ShotState(active: false, durationMs: msg.durationMs);
+      shotStartTime = null;
     }
     notifyListeners();
   }
@@ -89,6 +100,12 @@ class DeviceModel extends ChangeNotifier {
     final raw = parameters[name];
     if (raw == null) return null;
     return scaleParam(name, raw);
+  }
+
+  /// Send a parameter update to the device. [value] is the human-readable
+  /// value (e.g. 93.0 for °C); scaling to raw is handled by [cmdSet].
+  Future<void> sendSet(String param, dynamic value) async {
+    await sender?.call(cmdSet(param, value));
   }
 
   void _appendHistory(List<double> list, double value) {

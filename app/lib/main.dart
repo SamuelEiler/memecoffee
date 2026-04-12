@@ -27,7 +27,9 @@ class _MeCoffeeAppState extends State<MeCoffeeApp> {
   @override
   void initState() {
     super.initState();
-    _ble = BleConnection(context.read<DeviceModel>());
+    final model = context.read<DeviceModel>();
+    _ble = BleConnection(model);
+    model.sender = _ble.send;
     _ble.start();
   }
 

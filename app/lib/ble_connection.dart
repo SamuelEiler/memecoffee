@@ -1,27 +1,22 @@
 // BLE connection to the MeCoffee PID controller.
-//
-// Scans for a device whose name starts with "meCoffee", connects, subscribes
-// to notifications on the HM-10 FFE1 characteristic, and feeds parsed
-// protocol lines into the DeviceModel.
-//
-// Handles auto-discovery, line buffering, initialization handshake,
-// and auto-reconnect after disconnection.
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'device_model.dart';
 import 'protocol.dart';
 
-// Match by short 16-bit UUID fragment — avoids case/format sensitivity issues
 const String kServiceUuidFragment = 'ffe0';
 const String kCharUuidFragment    = 'ffe1';
 const String kDevicePrefix        = 'meCoffee';
-const Duration kScanTimeout    = Duration(seconds: 4);
-const Duration kReconnectDelay = Duration(seconds: 2);
-const int kWriteChunk = 20; // HM-10 max payload per BLE packet
+
+// Android allows max 5 scans per 30s — keep scan+delay total well above 6s
+const Duration kScanTimeout    = Duration(seconds: 8);
+const Duration kReconnectDelay = Duration(seconds: 5);
+const int kWriteChunk = 20; 
 
 class BleConnection {
   final DeviceModel model;
@@ -33,13 +28,9 @@ class BleConnection {
   String _buffer = '';
   int _lineCount = 0;
   bool _running = false;
-  bool _reconnecting = false; // guard against multiple reconnect loops
+  bool _reconnecting = false; 
 
   BleConnection(this.model);
-
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
 
   void start() {
     _running = true;
@@ -53,9 +44,9 @@ class BleConnection {
     _device?.disconnect();
   }
 
-  // -------------------------------------------------------------------------
-  // Connection flow
-  // -------------------------------------------------------------------------
+  Future<void> send(String data) async {
+    await _send(data);
+  }
 
   Future<void> _connect() async {
     if (_reconnecting) return;
@@ -63,22 +54,38 @@ class BleConnection {
 
     while (_running) {
       try {
-        // 1. First, check if we are already connected to a meCoffee device
-        final connected = FlutterBluePlus.connectedDevices;
+        // Wait for Bluetooth to be ON
+        BluetoothAdapterState state = await FlutterBluePlus.adapterState.first;
+        if (state != BluetoothAdapterState.on) {
+           print('[BLE] Bluetooth is $state. Waiting...');
+           if (state == BluetoothAdapterState.off && Platform.isAndroid) {
+              print('[BLE] Attempting to turn on Bluetooth...');
+              await FlutterBluePlus.turnOn();
+           }
+           await Future.delayed(const Duration(seconds: 5));
+           continue;
+        }
+
+        print('[BLE] --- Attempting Connection ---');
+
+        // 1. Check system devices (already paired/connected)
+        List<BluetoothDevice> system = await FlutterBluePlus.systemDevices([]);
         BluetoothDevice? target;
-        for (var d in connected) {
-          if (d.platformName.startsWith(kDevicePrefix)) {
+        for (var d in system) {
+          if (d.platformName.toLowerCase().contains('coffee')) {
             target = d;
-            print('[BLE] Found already connected device: ${d.platformName}');
+            print('[BLE] Found in system devices: ${d.platformName}');
             break;
           }
         }
 
-        // 2. If not already connected, scan for it
-        target ??= await _scan();
+        // 2. Scan if not found
+        if (target == null) {
+          target = await _scan();
+        }
         
         if (target == null) {
-          // No device found during scan, wait briefly before retrying
+          print('[BLE] No meCoffee found. Waiting 10s to stay under scan limit...');
           await Future.delayed(kReconnectDelay);
           continue;
         }
@@ -86,13 +93,11 @@ class BleConnection {
         _device = target;
         _char = null;
 
-        // On Android, explicitly setting a 10s timeout can help clear stalled attempts
-        await target.connect(autoConnect: false).timeout(const Duration(seconds: 10));
+        print('[BLE] Connecting to ${target.remoteId}...');
+        await target.connect(autoConnect: false).timeout(const Duration(seconds: 15));
 
-        // Use the List returned by discoverServices — more reliable than
-        // device.servicesList which may not be populated yet.
+        print('[BLE] Discovering services...');
         final services = await target.discoverServices();
-
         for (final service in services) {
           if (service.uuid.toString().contains(kServiceUuidFragment)) {
             for (final char in service.characteristics) {
@@ -104,27 +109,23 @@ class BleConnection {
         }
 
         if (_char == null) {
-          // FFE1 not found — wrong device or firmware issue
+          print('[BLE] Target characteristic $kCharUuidFragment not found.');
           await target.disconnect();
           await Future.delayed(kReconnectDelay);
           continue;
         }
 
-        // Subscribe to incoming notifications
         await _char!.setNotifyValue(true);
         _lineCount = 0;
         _buffer = '';
         _notifySubscription = _char!.onValueReceived.listen(_onData);
 
-        // Handshake: Give the device a moment to clear its buffer of tmp lines,
-        // then request dump and clock sync. Corrected leading \n logic is in protocol.dart.
+        // Corrected Handshake: leading \n for meCoffee firmware
         await Future.delayed(const Duration(milliseconds: 1500));
-        print('[BLE] sending cmd dump');
         await _send(cmdDump());
         await Future.delayed(const Duration(milliseconds: 500));
         await _send(cmdClockSync());
 
-        // Watch for disconnection
         _stateSubscription = target.connectionState.listen((state) {
           if (state == BluetoothConnectionState.disconnected) {
             model.onDisconnected();
@@ -137,9 +138,10 @@ class BleConnection {
           }
         });
 
+        print('[BLE] Connection successful.');
         model.onConnected();
         _reconnecting = false;
-        return; // Success — loop stops while connected
+        return; 
 
       } catch (e) {
         print('[BLE] Connection error: $e');
@@ -147,89 +149,75 @@ class BleConnection {
         await Future.delayed(kReconnectDelay);
       }
     }
-
     _reconnecting = false;
   }
 
   Future<BluetoothDevice?> _scan() async {
-    final completer = Completer<BluetoothDevice?>();
-    StreamSubscription? sub;
+    print('[BLE] Starting scan...');
+    BluetoothDevice? found;
+    
+    if (FlutterBluePlus.isScanningNow) {
+      await FlutterBluePlus.stopScan();
+      await Future.delayed(const Duration(seconds: 1));
+    }
 
-    // Fast-stop scan as soon as we find the target
-    sub = FlutterBluePlus.scanResults.listen((results) {
-      for (final r in results) {
-        if (r.device.platformName.startsWith(kDevicePrefix)) {
-          FlutterBluePlus.stopScan();
-          sub?.cancel();
-          if (!completer.isCompleted) completer.complete(r.device);
-          return;
+    final sub = FlutterBluePlus.onScanResults.listen((results) {
+      for (ScanResult r in results) {
+        final name = r.advertisementData.advName;
+        final pName = r.device.platformName;
+
+        if (name.isNotEmpty || pName.isNotEmpty) {
+          print('[BLE] Discovered: "$name" / "$pName" [${r.device.remoteId}]');
+        }
+
+        if (name.toLowerCase().contains('coffee') ||
+            pName.toLowerCase().contains('coffee')) {
+          print('[BLE] >>> meCoffee Found! <<<');
+          found = r.device;
+          FlutterBluePlus.stopScan(); // stop immediately — no need to scan longer
         }
       }
     });
 
     try {
-      // Shorter timeout to avoid holding the radio for too long
-      await FlutterBluePlus.startScan(timeout: kScanTimeout);
+      await FlutterBluePlus.startScan(
+        timeout: kScanTimeout,
+        androidUsesFineLocation: true,
+      );
     } catch (e) {
-      print('[BLE] Scan error (likely throttled): $e');
-      sub.cancel();
-      return null;
+      print('[BLE] startScan failed: $e');
     }
 
-    // Fail-safe to return null if the scan completes without finding the device
-    Future.delayed(kScanTimeout + const Duration(milliseconds: 500), () {
-      sub?.cancel();
-      if (!completer.isCompleted) completer.complete(null);
-    });
+    // Wait until scan stops (either device found + early stop, or timeout)
+    while (FlutterBluePlus.isScanningNow) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
 
-    return completer.future;
+    sub.cancel();
+    return found;
   }
-
-  // -------------------------------------------------------------------------
-  // Data handling
-  // -------------------------------------------------------------------------
 
   void _onData(List<int> data) {
     final decoded = utf8.decode(data, allowMalformed: true);
-    print('[BLE] raw: ${decoded.replaceAll('\n', '\\n').replaceAll('\r', '\\r')}');
     _buffer += decoded;
-
     while (_buffer.contains('\n')) {
       final idx = _buffer.indexOf('\n');
       final line = _buffer.substring(0, idx).trim();
       _buffer = _buffer.substring(idx + 1);
-
       if (line.isEmpty) continue;
-
       _lineCount++;
-      print('[BLE] line $_lineCount: $line');
-
       _dispatch(line);
     }
   }
 
   void _dispatch(String line) {
     final msg = parseLine(line);
-    if (msg == null) {
-      print('[BLE] unparsed: $line');
-      return;
-    }
-
-    if (msg is TmpMessage) {
-      model.onTemperature(msg);
-    } else if (msg is PidMessage) {
-      model.onPid(msg);
-    } else if (msg is ParamMessage) {
-      print('[BLE] param: ${msg.name} = ${msg.rawValue}');
-      model.onParam(msg);
-    } else if (msg is ShotMessage) {
-      model.onShot(msg);
-    }
+    if (msg == null) return;
+    if (msg is TmpMessage) model.onTemperature(msg);
+    else if (msg is PidMessage) model.onPid(msg);
+    else if (msg is ParamMessage) model.onParam(msg);
+    else if (msg is ShotMessage) model.onShot(msg);
   }
-
-  // -------------------------------------------------------------------------
-  // Writing
-  // -------------------------------------------------------------------------
 
   Future<void> _send(String data) async {
     if (_char == null) return;
