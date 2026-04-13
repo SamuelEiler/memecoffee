@@ -99,6 +99,12 @@ See [`app/lib/protocol.dart`](app/lib/protocol.dart) and [`python/protocol.py`](
 
 ---
 
+## Download
+
+Pre-built APKs are available on the [Releases](https://github.com/SamuelEiler/memecoffee/releases) page.
+
+To install: download the APK, enable *Install from unknown sources* in Android settings, and open the file.
+
 ## Contributing
 
 Pull requests are welcome. Open an issue to discuss larger changes first.
