@@ -1,6 +1,6 @@
 # MeCoffee
 
-Open-source app for the [MeCoffee PID controller](https://www.me-company.nl/mecoffee/) on the Rancilio Silvia — Flutter (Android/iOS) + Python terminal client.
+Open-source app for the [MeCoffee PID controller](https://mecoffee.nl/mebarista/) on the Rancilio Silvia — Flutter (Android/iOS) + Python terminal client.
 
 The original meBarista app is no longer maintained. This project replaces it with a modern, open-source alternative that connects over BLE and exposes the full parameter set of the MeCoffee PID kit.
 
@@ -35,6 +35,8 @@ mecoffee/
 - Flutter 3.x
 - Android 6+ or iOS 12+
 - A Rancilio Silvia with the MeCoffee PID kit installed
+
+> **Tested on:** Pixel 7 (Android). iOS support is implemented but not yet tested on real hardware.
 
 ### Run
 
@@ -99,7 +101,7 @@ See [`app/lib/protocol.dart`](app/lib/protocol.dart) and [`python/protocol.py`](
 
 ## Contributing
 
-Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) if one exists, or open an issue to discuss changes first.
+Pull requests are welcome. Open an issue to discuss larger changes first.
 
 ---
 
