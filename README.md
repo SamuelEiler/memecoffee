@@ -4,17 +4,29 @@ Open-source app for the [MeCoffee PID controller](https://mecoffee.nl/mebarista/
 
 The original meBarista app is no longer maintained. This project replaces it with a modern, open-source alternative that connects over BLE and exposes the full parameter set of the MeCoffee PID kit.
 
+<img src="screenshot.png" width="320" alt="MeCoffee app screenshot" />
+
 ---
 
 ## Features
 
-- Live boiler temperature and setpoint display with chart
-- PID power bar and raw P/I/D terms
-- Set brew and steam temperature from the app
-- Adjust PID P/I/D parameters
-- Shot timer with configurable target time and vibration alert
-- Auto-reconnect on disconnect
-- Python terminal dashboard for scripting and debugging
+### Shot timer
+A shot timer is always visible at the top of the screen. Set a target time (e.g. 25 s) and the timer counts up as soon as you start pulling a shot. When the target is reached the phone vibrates with two strong pulses so you know to stop — even if the phone is on the counter. The last shot duration is shown after the shot ends.
+
+### Temperature control
+Tap the setpoint on the main screen to adjust the brew temperature. A bottom sheet opens with **−1**, **−½**, **+½**, **+1 °C** step buttons so you can dial in your temperature precisely. The steam setpoint is adjustable the same way from the parameters section.
+
+### PID tuning
+The P, I and D values can be edited directly from the app. Tap any PID parameter to enter a new value — changes are sent to the device immediately over BLE.
+
+### Live dashboard
+- Boiler temperature and setpoint with colour-coded offset indicator
+- Scrolling temperature chart (boiler vs setpoint)
+- PID power bar showing heater output percentage
+- Full device parameter list
+
+### Auto-reconnect
+The app scans for the MeCoffee device on launch and reconnects automatically if the connection drops.
 
 ---
 
